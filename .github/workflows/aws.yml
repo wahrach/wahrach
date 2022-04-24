@@ -1,0 +1,95 @@
+# سيبني سير العمل هذا ويدفع صورة حاوية جديدة إلى Amazon ECR ،
+# ثم سيتم نشر تعريف مهمة جديد في Amazon ECS ، عندما يكون هناك دفع إلى الفرع الرئيسي.
+#
+# لاستخدام سير العمل هذا ، ستحتاج إلى إكمال خطوات الإعداد التالية:
+#
+# 1. أنشئ مستودع ECR لتخزين صورك.
+# على سبيل المثال: `aws ecr create-repository --repository-name my-ecr-repo --region us-east-2`.
+# استبدل قيمة متغير البيئة "ECR_REPOSITORY" في سير العمل أدناه باسم المستودع الخاص بك.
+# استبدل قيمة متغير البيئة "AWS_REGION" في سير العمل أدناه بمنطقة المستودع الخاص بك.
+#
+# 2. قم بإنشاء تعريف مهمة ECS ، ومجموعة ECS ، وخدمة ECS.
+# على سبيل المثال ، اتبع دليل Getting Started على وحدة تحكم ECS:
+# https://us-east-2.console.aws.amazon.com/ecs/home؟region=us-east-2#/firstRun
+# استبدل قيمة متغير البيئة `ECS_SERVICE` في سير العمل أدناه بالاسم الذي قمت بتعيينه لخدمة Amazon ECS.
+# استبدل قيمة متغير البيئة `ECS_CLUSTER` في سير العمل أدناه بالاسم الذي حددته للمجموعة.
+#
+# 3. قم بتخزين تعريف مهمة ECS كملف JSON في المستودع الخاص بك.
+# يجب أن يتبع التنسيق إخراج `aws ecs register-task-definition - Generate-cli-skeleton`.
+# استبدل قيمة متغير البيئة `ECS_TASK_DEFINITION` في سير العمل أدناه بالمسار إلى ملف JSON.
+# استبدل قيمة متغير البيئة `CONTAINER_NAME` في سير العمل أدناه باسم الحاوية
+# في قسم "تعريفات الحاوية" من تعريف المهمة.
+#
+# 4. قم بتخزين مفتاح وصول مستخدم IAM في أسرار إجراءات GitHub المسماة "AWS_ACCESS_KEY_ID" و "AWS_SECRET_ACCESS_KEY".
+# راجع الوثائق الخاصة بكل إجراء مستخدم أدناه لسياسات IAM الموصى بها لمستخدم IAM هذا ،
+# وأفضل الممارسات للتعامل مع بيانات اعتماد مفتاح الوصول.
+
+الاسم: انشر في Amazon ECS
+
+تشغيل:
+  يدفع:
+    الفروع:
+      - الأساسية
+
+البيئة المحيطة:
+  AWS_REGION: MY_AWS_REGION # اضبط هذا على منطقة AWS المفضلة لديك ، على سبيل المثال الولايات المتحدة الغرب 1
+  ECR_REPOSITORY: MY_ECR_REPOSITORY # اضبط هذا على اسم مستودع Amazon ECR الخاص بك
+  ECS_SERVICE: MY_ECS_SERVICE # اضبط هذا على اسم خدمة Amazon ECS الخاص بك
+  ECS_CLUSTER: MY_ECS_CLUSTER # اضبط هذا على اسم مجموعة Amazon ECS الخاص بك
+  ECS_TASK_DEFINITION: MY_ECS_TASK_DEFINITION # اضبط هذا على المسار إلى تعريف مهمة Amazon ECS الخاص بك
+                                               # ملف ، على سبيل المثال .aws / مهمة تعريف. json
+  CONTAINER_NAME: MY_CONTAINER_NAME # عيّن هذا على اسم الحاوية في
+                                               # ContainerDefinitions قسم تعريف مهمتك
+
+أذونات:
+  المحتويات: قراءة
+
+وظائف:
+  نشر:
+    الاسم: نشر
+    يعمل على: ubuntu-latest
+    البيئة: الإنتاج
+
+    خطوات:
+    - الاسم: الخروج
+      يستخدم: الإجراءات / الخروج @ v3
+
+    - الاسم: تكوين بيانات اعتماد AWS
+      الاستخدامات: aws-Actions / config-aws-documents @ v1
+      مع:
+        aws-access-key-id: $ {secrets.AWS_ACCESS_KEY_ID}}
+        aws-secret-access-key: $ {{secrets.AWS_SECRET_ACCESS_KEY}}
+        منطقة aws: $ {{env.AWS_REGION}}
+
+    - الاسم: تسجيل الدخول إلى Amazon ECR
+      المعرف: تسجيل الدخول ecr
+      الاستخدامات: aws-Actions / amazon-ecr-login @ v1
+
+    - الاسم: أنشئ الصورة ووسمها وادفعها إلى Amazon ECR
+      المعرف: بناء الصورة
+      البيئة المحيطة:
+        ECR_REGISTRY: $ {{steps.login-ecr.outputs.registry}}
+        IMAGE_TAG: $ {{github.sha}}
+      تشغيل: |
+        # بناء حاوية عامل ميناء و
+        # ادفعه إلى ECR حتى يتمكن من ذلك
+        # يتم نشرها في ECS.
+        بناء عامل الإرساء -t $ ECR_REGISTRY / $ ECR_REPOSITORY: $ IMAGE_TAG.
+        دفع عامل الإرساء $ ECR_REGISTRY / $ ECR_REPOSITORY: $ IMAGE_TAG
+        صدى ":: اسم مجموعة الإخراج = صورة :: $ ECR_REGISTRY / $ ECR_REPOSITORY: $ IMAGE_TAG"
+
+    - الاسم: املأ معرف الصورة الجديد في تعريف مهمة Amazon ECS
+      المعرف: مهمة ناقصة
+      الاستخدامات: aws-Actions / amazon-ecs-render-مهمة-تعريف @ v1
+      مع:
+        تعريف المهمة: $ {{env.ECS_TASK_DEFINITION}}
+        اسم الحاوية: $ {{env.CONTAINER_NAME}}
+        الصورة: $ {{steps.build-image.outputs.image}}
+
+    - الاسم: نشر تعريف مهمة Amazon ECS
+      الاستخدامات: aws-Actions / amazon-ecs -loyment-task-definition @ v1
+      مع:
+        تعريف المهمة: $ {{steps.task-def.outputs.task-definition}}
+        الخدمة: $ {{env.ECS_SERVICE}}
+        المجموعة: $ {{env.ECS_CLUSTER}}
+        انتظار استقرار الخدمة: صحيح
